@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digit Recognizer</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --fg:#e8eaf0; --dim:#8b93a7;
+          --line:#262b36; --accent:#5b8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;
+         background:var(--bg); color:var(--fg); display:flex; justify-content:center;
+         padding:32px 16px; }
+  .wrap { width:100%; max-width:720px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { color:var(--dim); margin:0 0 24px; font-size:14px; }
+  .panel { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+  canvas#pad { background:#000; border:1px solid var(--line); border-radius:12px;
+               cursor:crosshair; touch-action:none; }
+  canvas#thumb { background:#000; border:1px solid var(--line); border-radius:6px;
+                 image-rendering:pixelated; width:84px; height:84px; }
+  .col { flex:1; min-width:260px; }
+  .guess { font-size:64px; font-weight:600; line-height:1; margin:0 0 2px;
+           font-variant-numeric:tabular-nums; }
+  .conf { color:var(--dim); font-size:13px; margin:0 0 16px; }
+  .bars { display:grid; grid-template-columns:auto 1fr auto; gap:4px 10px;
+          align-items:center; font-size:12px; font-variant-numeric:tabular-nums; }
+  .track { display:block; height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .fill { display:block; height:100%; background:var(--accent); border-radius:4px; width:0;
+          transition:width .12s ease; }
+  .pct { color:var(--dim); width:42px; text-align:right; }
+  button { font:inherit; padding:7px 14px; border-radius:8px; cursor:pointer;
+           border:1px solid var(--line); background:transparent; color:var(--fg); }
+  button:hover { border-color:var(--accent); }
+  .row { display:flex; gap:8px; align-items:center; margin-top:12px; }
+  .meta { color:var(--dim); font-size:12px; margin-top:20px;
+          border-top:1px solid var(--line); padding-top:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Handwritten digit recognizer</h1>
+  <p class="sub">Draw a digit from 0 to 9. The CNN runs locally in your browser.</p>
+
+  <div class="panel">
+    <div>
+      <canvas id="pad" width="280" height="280"></canvas>
+      <div class="row">
+        <button id="clear">Clear</button>
+        <span style="color:var(--dim);font-size:12px">model input &rarr;</span>
+        <canvas id="thumb" width="28" height="28"></canvas>
+      </div>
+    </div>
+    <div class="col">
+      <p class="guess" id="guess">&ndash;</p>
+      <p class="conf" id="conf">waiting for a drawing</p>
+      <div class="bars" id="bars"></div>
+    </div>
+  </div>
+
+  <p class="meta" id="meta"></p>
+</div>
+
+<script src="weights.js"></script>
+<script>
+// ---- unpack weights -------------------------------------------------------
+const raw = Uint8Array.from(atob(MODEL_B64), c => c.charCodeAt(0));
+const FLOATS = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
+const L = MODEL_META.map(m => ({
+  type: m.type, shape: m.shape,
+  w: FLOATS.subarray(m.w[0], m.w[0] + m.w[1]),
+  b: FLOATS.subarray(m.b[0], m.b[0] + m.b[1]),
+}));
+
+// ---- forward pass ---------------------------------------------------------
+// Zero-pad by 1 so the convolution inner loop needs no bounds checks.
+function pad1(inp, C, H, W) {
+  const PH = H + 2, PW = W + 2;
+  const out = new Float32Array(C * PH * PW);
+  for (let c = 0; c < C; c++) {
+    const si = c * H * W, di = c * PH * PW;
+    for (let y = 0; y < H; y++) {
+      out.set(inp.subarray(si + y * W, si + y * W + W), di + (y + 1) * PW + 1);
+    }
+  }
+  return out;
+}
+
+// 3x3 stride-1 same-padding convolution with fused ReLU. The kernel is
+// unrolled and the input pre-padded; that is ~40x faster in JS than the
+// straightforward version with per-tap bounds checks.
+function convRelu(inp, Cin, H, W, layer) {
+  const Cout = layer.shape[0], w = layer.w, b = layer.b;
+  const p = pad1(inp, Cin, H, W);
+  const PW = W + 2, PH = H + 2, HW = H * W;
+  const out = new Float32Array(Cout * HW);
+
+  for (let oc = 0; oc < Cout; oc++) {
+    const oo = oc * HW, wo = oc * Cin * 9;
+    out.fill(b[oc], oo, oo + HW);
+
+    for (let ic = 0; ic < Cin; ic++) {
+      const ib = ic * PH * PW, wi = wo + ic * 9;
+      const w0 = w[wi],     w1 = w[wi + 1], w2 = w[wi + 2],
+            w3 = w[wi + 3], w4 = w[wi + 4], w5 = w[wi + 5],
+            w6 = w[wi + 6], w7 = w[wi + 7], w8 = w[wi + 8];
+
+      for (let y = 0; y < H; y++) {
+        const r0 = ib + y * PW, r1 = r0 + PW, r2 = r1 + PW, o = oo + y * W;
+        for (let x = 0; x < W; x++) {
+          out[o + x] +=
+            p[r0 + x] * w0 + p[r0 + x + 1] * w1 + p[r0 + x + 2] * w2 +
+            p[r1 + x] * w3 + p[r1 + x + 1] * w4 + p[r1 + x + 2] * w5 +
+            p[r2 + x] * w6 + p[r2 + x + 1] * w7 + p[r2 + x + 2] * w8;
+        }
+      }
+    }
+    for (let i = oo; i < oo + HW; i++) if (out[i] < 0) out[i] = 0;
+  }
+  return out;
+}
+
+function maxPool2(inp, C, H, W) {
+  const oh = H >> 1, ow = W >> 1;
+  const out = new Float32Array(C * oh * ow);
+  for (let c = 0; c < C; c++) {
+    const ib = c * H * W, ob = c * oh * ow;
+    for (let y = 0; y < oh; y++) {
+      for (let x = 0; x < ow; x++) {
+        const a = ib + 2 * y * W + 2 * x, d = a + W;
+        out[ob + y * ow + x] = Math.max(inp[a], inp[a + 1], inp[d], inp[d + 1]);
+      }
+    }
+  }
+  return out;
+}
+
+function linear(inp, layer, relu) {
+  const Cout = layer.shape[0], Cin = layer.shape[1], w = layer.w, b = layer.b;
+  const out = new Float32Array(Cout);
+  for (let o = 0; o < Cout; o++) {
+    let s = b[o];
+    const base = o * Cin;
+    for (let i = 0; i < Cin; i++) s += inp[i] * w[base + i];
+    out[o] = relu && s < 0 ? 0 : s;
+  }
+  return out;
+}
+
+function softmax(v) {
+  const m = Math.max.apply(null, v);
+  const e = v.map(x => Math.exp(x - m));
+  const sum = e.reduce((a, b) => a + b, 0);
+  return e.map(x => x / sum);
+}
+
+function predict(input28) {          // Float32Array(784), already normalized
+  let t = convRelu(input28, 1, 28, 28, L[0]);
+  t = convRelu(t, 32, 28, 28, L[1]);
+  t = maxPool2(t, 32, 28, 28);
+  t = convRelu(t, 32, 14, 14, L[2]);
+  t = convRelu(t, 64, 14, 14, L[3]);
+  t = maxPool2(t, 64, 14, 14);
+  t = linear(t, L[4], true);
+  return softmax(Array.from(linear(t, L[5], false)));
+}
+
+// ---- MNIST-style preprocessing (mirrors src/preprocess.py) ----------------
+const MEAN = 0.1307, STD = 0.3081;
+
+function toMnist(ctx) {
+  const img = ctx.getImageData(0, 0, 280, 280);
+  const data = img.data, W = 280, H = 280;
+  const ink = new Float32Array(W * H);
+  let minX = W, minY = H, maxX = -1, maxY = -1;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const v = data[(y * W + x) * 4 + 3] / 255;   // alpha = stroke coverage
+      ink[y * W + x] = v;
+      if (v > 0.15) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;                        // nothing drawn
+
+  // Scale the longest side of the bounding box to 20px (box-filter downsample).
+  const bw = maxX - minX + 1, bh = maxY - minY + 1;
+  const nw = bw >= bh ? 20 : Math.max(1, Math.round(bw * 20 / bh));
+  const nh = bh >= bw ? 20 : Math.max(1, Math.round(bh * 20 / bw));
+  const small = new Float32Array(nw * nh);
+  for (let y = 0; y < nh; y++) {
+    const y0 = minY + y * bh / nh, y1 = minY + (y + 1) * bh / nh;
+    for (let x = 0; x < nw; x++) {
+      const x0 = minX + x * bw / nw, x1 = minX + (x + 1) * bw / nw;
+      let sum = 0, n = 0;
+      for (let sy = Math.floor(y0); sy < Math.max(Math.ceil(y1), Math.floor(y0) + 1); sy++) {
+        for (let sx = Math.floor(x0); sx < Math.max(Math.ceil(x1), Math.floor(x0) + 1); sx++) {
+          sum += ink[sy * W + sx]; n++;
+        }
+      }
+      small[y * nw + x] = n ? sum / n : 0;
+    }
+  }
+
+  // Center it in 28x28 by center of mass, the way MNIST was built.
+  let mass = 0, cx = 0, cy = 0;
+  for (let y = 0; y < nh; y++) {
+    for (let x = 0; x < nw; x++) {
+      const v = small[y * nw + x]; mass += v; cx += x * v; cy += y * v;
+    }
+  }
+  cx = mass ? cx / mass : (nw - 1) / 2;
+  cy = mass ? cy / mass : (nh - 1) / 2;
+  const offX = Math.round(13.5 - cx), offY = Math.round(13.5 - cy);
+
+  const out = new Float32Array(784);
+  for (let y = 0; y < nh; y++) {
+    const ty = y + offY;
+    if (ty < 0 || ty > 27) continue;
+    for (let x = 0; x < nw; x++) {
+      const tx = x + offX;
+      if (tx < 0 || tx > 27) continue;
+      out[ty * 28 + tx] = small[y * nw + x];
+    }
+  }
+  return out;
+}
+
+// ---- canvas + UI ----------------------------------------------------------
+const pad = document.getElementById('pad'), ctx = pad.getContext('2d');
+const thumb = document.getElementById('thumb'), tctx = thumb.getContext('2d');
+ctx.lineWidth = 22; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+ctx.strokeStyle = '#fff';
+
+let drawing = false, dirty = false;
+
+function pos(e) {
+  const r = pad.getBoundingClientRect();
+  return [(e.clientX - r.left) * pad.width / r.width,
+          (e.clientY - r.top) * pad.height / r.height];
+}
+pad.addEventListener('pointerdown', e => {
+  drawing = true;
+  pad.setPointerCapture(e.pointerId);
+  const p = pos(e);
+  ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+  dirty = true;
+});
+pad.addEventListener('pointermove', e => {
+  if (!drawing) return;
+  const p = pos(e);
+  ctx.lineTo(p[0], p[1]); ctx.stroke();
+  dirty = true;
+});
+addEventListener('pointerup', () => { drawing = false; });
+
+document.getElementById('clear').onclick = () => {
+  ctx.clearRect(0, 0, 280, 280);
+  tctx.clearRect(0, 0, 28, 28);
+  document.getElementById('guess').textContent = '–';
+  document.getElementById('conf').textContent = 'waiting for a drawing';
+  for (let d = 0; d < 10; d++) {
+    document.getElementById('f' + d).style.width = '0';
+    document.getElementById('p' + d).textContent = '0%';
+  }
+};
+
+const bars = document.getElementById('bars');
+for (let d = 0; d < 10; d++) {
+  bars.insertAdjacentHTML('beforeend',
+    '<span>' + d + '</span><span class="track"><span class="fill" id="f' + d +
+    '"></span></span><span class="pct" id="p' + d + '">0%</span>');
+}
+
+function run() {
+  if (!dirty) return;
+  dirty = false;
+  const arr = toMnist(ctx);
+  if (!arr) return;
+
+  // thumbnail of exactly what the model sees
+  const im = tctx.createImageData(28, 28);
+  for (let i = 0; i < 784; i++) {
+    const v = Math.round(arr[i] * 255);
+    im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v;
+    im.data[i * 4 + 3] = 255;
+  }
+  tctx.putImageData(im, 0, 0);
+
+  const norm = new Float32Array(784);
+  for (let i = 0; i < 784; i++) norm[i] = (arr[i] - MEAN) / STD;
+  const probs = predict(norm);
+
+  let best = 0;
+  for (let d = 1; d < 10; d++) if (probs[d] > probs[best]) best = d;
+  document.getElementById('guess').textContent = best;
+  document.getElementById('conf').textContent =
+    (probs[best] * 100).toFixed(1) + '% confident';
+  for (let d = 0; d < 10; d++) {
+    document.getElementById('f' + d).style.width = (probs[d] * 100).toFixed(1) + '%';
+    document.getElementById('p' + d).textContent = (probs[d] * 100).toFixed(0) + '%';
+  }
+}
+setInterval(run, 120);
+
+const nParams = MODEL_META.reduce((a, m) => a + m.w[1] + m.b[1], 0);
+document.getElementById('meta').textContent =
+  (nParams / 1000).toFixed(0) + 'k parameters · ' +
+  (MODEL_ACCURACY * 100).toFixed(2) + '% on the MNIST test set · runs on CPU in this tab';
+</script>
+</body>
+</html>

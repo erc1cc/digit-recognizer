@@ -1,0 +1,366 @@
+<title>CNN Digit Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root {
+  --paper:   #eef0f3;
+  --panel:   #ffffff;
+  --ink:     #161a21;
+  --ink-2:   #5a6472;
+  --ink-3:   #8b95a3;
+  --line:    #d6dbe2;
+  --line-2:  #e6eaef;
+  --accent:  #0e7c8a;
+  --accent-2:#0a5e69;
+  --soft:    #d9eaed;
+  --warn:    #a9640f;
+  --warn-soft:#f3e6d2;
+  --pad:     #10141a;
+  --pad-line:#2a323d;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:   #0d1015;
+    --panel:   #141920;
+    --ink:     #e7ebf1;
+    --ink-2:   #929daa;
+    --ink-3:   #6b7684;
+    --line:    #252d38;
+    --line-2:  #1c232c;
+    --accent:  #46b6c4;
+    --accent-2:#6ecdd8;
+    --soft:    #15333a;
+    --warn:    #d9932f;
+    --warn-soft:#33280f;
+    --pad:     #05080c;
+    --pad-line:#232b35;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:   #0d1015;
+  --panel:   #141920;
+  --ink:     #e7ebf1;
+  --ink-2:   #929daa;
+  --ink-3:   #6b7684;
+  --line:    #252d38;
+  --line-2:  #1c232c;
+  --accent:  #46b6c4;
+  --accent-2:#6ecdd8;
+  --soft:    #15333a;
+  --warn:    #d9932f;
+  --warn-soft:#33280f;
+  --pad:     #05080c;
+  --pad-line:#232b35;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+/* ---------- masthead ---------- */
+.masthead { display: flex; flex-direction: column; gap: 10px; }
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+h1 {
+  font-family: Archivo, "Helvetica Neue", sans-serif;
+  font-weight: 700;
+  font-size: clamp(30px, 6vw, 44px);
+  font-stretch: 112%;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  text-wrap: balance;
+  margin: 0;
+}
+.standfirst {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ink-2);
+  font-size: 17px;
+}
+
+/* ---------- instrument ---------- */
+.instrument {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 28px;
+  align-items: start;
+}
+@media (max-width: 720px) { .instrument { grid-template-columns: 1fr; } }
+
+.pad-stack { display: flex; flex-direction: column; gap: 12px; }
+
+canvas#pad {
+  width: min(300px, 100%);
+  aspect-ratio: 1 / 1;
+  height: auto;
+  background: var(--pad);
+  border: 1px solid var(--pad-line);
+  border-radius: 4px;
+  cursor: crosshair;
+  touch-action: none;
+  display: block;
+}
+
+.pad-foot { display: flex; align-items: center; gap: 12px; }
+
+button {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.seen { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.seen span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); text-align: right; line-height: 1.3;
+}
+canvas#thumb {
+  width: 56px; height: 56px;
+  image-rendering: pixelated;
+  background: var(--pad);
+  border: 1px solid var(--pad-line);
+  border-radius: 3px;
+  display: block;
+}
+
+/* ---------- readout ---------- */
+.readout {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 20px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.verdict { display: flex; align-items: baseline; gap: 16px; min-height: 76px; }
+.glyph {
+  font-family: Archivo, sans-serif;
+  font-weight: 700;
+  font-size: 72px;
+  line-height: 0.85;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  transition: color .2s;
+}
+.glyph.idle { color: var(--ink-3); }
+.glyph.unsure { color: var(--warn); }
+.verdict-meta { display: flex; flex-direction: column; gap: 3px; }
+.conf {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 20px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.note {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.note.unsure { color: var(--warn); }
+
+.dist { display: flex; flex-direction: column; gap: 3px; }
+.dist-head {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-3);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-2);
+  margin-bottom: 4px;
+}
+.bar {
+  display: grid;
+  grid-template-columns: 14px 1fr 46px;
+  align-items: center;
+  gap: 12px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+.bar.lead { color: var(--ink); }
+.track { display: block; height: 3px; background: var(--line-2); border-radius: 2px; overflow: hidden; }
+.fill {
+  display: block;
+  height: 100%; width: 0;
+  background: var(--ink-3);
+  border-radius: 2px;
+  transition: width .14s linear, background-color .2s;
+}
+.bar.lead .fill { background: var(--accent); }
+.bar.lead.unsure .fill { background: var(--warn); }
+.val { text-align: right; }
+@media (prefers-reduced-motion: reduce) {
+  .fill { transition: none; }
+  .glyph { transition: none; }
+}
+
+/* ---------- spec strip ---------- */
+.specs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+@media (max-width: 560px) { .specs { grid-template-columns: repeat(2, 1fr); } }
+.spec { background: var(--panel); padding: 14px 16px; display: flex; flex-direction: column; gap: 3px; }
+.spec dt {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.spec dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 18px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ---------- prose ---------- */
+.prose { display: flex; flex-direction: column; gap: 26px; max-width: 65ch; }
+.prose section { display: flex; flex-direction: column; gap: 8px; }
+h2 {
+  font-family: Archivo, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+}
+.prose p { margin: 0; color: var(--ink-2); }
+.prose p strong { color: var(--ink); font-weight: 600; }
+code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--soft);
+  color: var(--accent-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.rule { height: 1px; background: var(--line); border: 0; margin: 0; }
+.colophon {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Convolutional network &middot; 468k parameters</p>
+    <h1>A network that reads your handwriting</h1>
+    <p class="standfirst">Draw a digit in the pad. The network runs entirely in this tab &mdash; no server, no request, no round trip. Every number below is computed on your own machine as you draw.</p>
+  </header>
+
+  <div class="instrument">
+    <div class="pad-stack">
+      <canvas id="pad" width="300" height="300" aria-label="Drawing pad"></canvas>
+      <div class="pad-foot">
+        <button id="clear" type="button">Clear</button>
+        <div class="seen">
+          <span>What the<br>network sees</span>
+          <canvas id="thumb" width="28" height="28" aria-label="Preprocessed 28 by 28 input"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="readout">
+      <div class="verdict">
+        <div class="glyph idle" id="glyph">&mdash;</div>
+        <div class="verdict-meta">
+          <div class="conf" id="conf">&mdash;</div>
+          <div class="note" id="note">Awaiting input</div>
+        </div>
+      </div>
+      <div class="dist" id="dist">
+        <div class="dist-head">Probability across all ten classes</div>
+      </div>
+    </div>
+  </div>
+
+  <dl class="specs">
+    <div class="spec"><dt>Test accuracy</dt><dd id="specAcc">&mdash;</dd></div>
+    <div class="spec"><dt>Errors / 10,000</dt><dd>38</dd></div>
+    <div class="spec"><dt>Parameters</dt><dd>468k</dd></div>
+    <div class="spec"><dt>Inference</dt><dd id="specMs">&mdash;</dd></div>
+  </dl>
+
+  <hr class="rule">
+
+  <div class="prose">
+    <section>
+      <h2>The network</h2>
+      <p>Two convolutional blocks &mdash; 32 channels then 64, each a pair of 3&times;3 convolutions with batch normalization, ReLU, max pooling and dropout &mdash; feeding a 128-unit hidden layer and a ten-way output. It was trained from scratch on MNIST for fourteen epochs with AdamW and a one-cycle learning rate schedule. That took two and a half minutes on a laptop and reached <strong>99.62% on the 10,000-image test set</strong>: 38 mistakes, most often a 9 read as a 4.</p>
+    </section>
+
+    <section>
+      <h2>Why it survives real handwriting</h2>
+      <p>MNIST digits are clean, upright and perfectly centered. Digits drawn by an actual person are none of those things, so training applied random rotation, translation, scaling, shear and small erasures to every image. That costs a little accuracy on the benchmark and buys a lot on the pad above.</p>
+    </section>
+
+    <section>
+      <h2>The preprocessing nobody mentions</h2>
+      <p>MNIST images were not simply resized to 28&times;28. Each digit was cropped to its bounding box, scaled so its longest side is 20 pixels, then placed in a 28&times;28 field centered by its <strong>center of mass</strong> &mdash; not its bounding box. Feed a naively resized drawing to a model trained on that distribution and predictions fall apart in a way that looks like a broken model. The small panel under the pad shows the result of reproducing that exact normalization, which is why it is on screen rather than hidden.</p>
+    </section>
+
+    <section>
+      <h2>Running in a browser</h2>
+      <p>Each batch-norm layer was folded into the weights of the convolution feeding it &mdash; algebraically identical at inference time, and it leaves only convolution, ReLU, max pooling and one matrix multiply to reimplement in JavaScript. The weights travel as a base64 <code>float32</code> block inside this page. The JavaScript output matches PyTorch to within <code>6e-7</code>, which is float32 rounding rather than a difference in the math.</p>
+    </section>
+
+    <section>
+      <h2>What it cannot do</h2>
+      <p>One digit at a time. Reading a multi-digit number needs a segmentation step first. It also knows only the ten digits, so a letter produces a confident and meaningless answer &mdash; the softmax has to choose something. And it learned from American handwriting collected in the 1990s, so crossed sevens and European-style ones are underrepresented and read less reliably.</p>
+    </section>
+
+    <hr class="rule">
+    <p class="colophon">Trained in PyTorch on MNIST &middot; 60,000 training images, 10,000 test images<br>Inference in hand-written JavaScript &middot; no framework, no network request</p>
+  </div>
+
+</div>
+
+<script>
