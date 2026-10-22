@@ -2,7 +2,7 @@
 
 A convolutional neural network that reads handwritten digits (0–9), trained
 from scratch on MNIST in PyTorch. Includes a browser demo that runs the
-trained network client-side, with no server involved.
+trained network client-side, with no server required.
 
 ## Layout
 
